@@ -1,0 +1,56 @@
+NET "hwclk" LOC = P57;
+
+NET "mode" LOC = P47;
+NET "set" LOC = P48;
+NET "op1" LOC = P49;
+NET "op2" LOC = P50;
+NET "op3" LOC = P51;
+NET "reset" LOC = P54;
+
+NET "dsp0[6]" LOC = P3;
+NET "dsp0[5]" LOC = P4;
+NET "dsp0[4]" LOC = P5;
+NET "dsp0[3]" LOC = P6;
+NET "dsp0[2]" LOC = P7;
+NET "dsp0[1]" LOC = P8;
+NET "dsp0[0]" LOC = P10;
+
+NET "dsp1[6]" LOC = P11;
+NET "dsp1[5]" LOC = P12;
+NET "dsp1[4]" LOC = P13;
+NET "dsp1[3]" LOC = P15;
+NET "dsp1[2]" LOC = P16;
+NET "dsp1[1]" LOC = P18;
+NET "dsp1[0]" LOC = P19;
+
+NET "dsp2[6]" LOC = P20;
+NET "dsp2[5]" LOC = P21;
+NET "dsp2[4]" LOC = P24;
+NET "dsp2[3]" LOC = P25;
+NET "dsp2[2]" LOC = P27;
+NET "dsp2[1]" LOC = P28;
+NET "dsp2[0]" LOC = P29;
+
+NET "dsp3[6]" LOC = P55;
+NET "dsp3[5]" LOC = P58;
+NET "dsp3[4]" LOC = P59;
+NET "dsp3[3]" LOC = P60;
+NET "dsp3[2]" LOC = P62;
+NET "dsp3[1]" LOC = P63;
+NET "dsp3[0]" LOC = P64;
+
+NET "dsp4[6]" LOC = P68;
+NET "dsp4[5]" LOC = P69;
+NET "dsp4[4]" LOC = P70;
+NET "dsp4[3]" LOC = P71;
+NET "dsp4[2]" LOC = P72;
+NET "dsp4[1]" LOC = P75;
+NET "dsp4[0]" LOC = P76;
+
+NET "dsp5[6]" LOC = P77;
+NET "dsp5[5]" LOC = P78;
+NET "dsp5[4]" LOC = P79;
+NET "dsp5[3]" LOC = P82;
+NET "dsp5[2]" LOC = P83;
+NET "dsp5[1]" LOC = P84;
+NET "dsp5[0]" LOC = P85;
