@@ -1,0 +1,517 @@
+diff --git a/.gitignore b/.gitignore
+new file mode 100644
+index 0000000..9bfa9fe
+--- /dev/null
++++ b/.gitignore
+@@ -0,0 +1,9 @@
++*.yo
++*.o
++*-std.c
++yis
++yas
++ssim
++psim
++/sim/pipe/ldriver.ys
++/sim/pipe/sdriver.ys
+diff --git a/sim/Makefile b/sim/Makefile
+index 8918d19..51c091c 100644
+--- a/sim/Makefile
++++ b/sim/Makefile
+@@ -1,19 +1,19 @@
+ # Comment this out if you don't have Tcl/Tk on your system
+ 
+-GUIMODE=-DHAS_GUI
++#GUIMODE=-DHAS_GUI
+ 
+ # Modify the following line so that gcc can find the libtcl.so and
+ # libtk.so libraries on your system. You may need to use the -L option
+ # to tell gcc which directory to look in. Comment this out if you
+ # don't have Tcl/Tk.
+ 
+-TKLIBS=-L/usr/lib -ltk -ltcl
++#TKLIBS=-L/usr/lib -ltk -ltcl
+ 
+ # Modify the following line so that gcc can find the tcl.h and tk.h
+ # header files on your system. Comment this out if you don't have
+ # Tcl/Tk.
+ 
+-TKINC=-isystem /usr/include/tcl8.5
++#TKINC=-isystem /usr/include/tcl8.5
+ 
+ ##################################################
+ # You shouldn't need to modify anything below here
+diff --git a/sim/misc/isa.c b/sim/misc/isa.c
+index b698d60..98d9faf 100644
+--- a/sim/misc/isa.c
++++ b/sim/misc/isa.c
+@@ -72,7 +72,10 @@ instr_t instruction_set[] =
+     {"cmovge", HPACK(I_RRMOVQ, C_GE), 2, R_ARG, 1, 1, R_ARG, 1, 0 },
+     {"cmovg", HPACK(I_RRMOVQ, C_G), 2, R_ARG, 1, 1, R_ARG, 1, 0 },
+     /* arg1hi indicates number of bytes */
+-    {"irmovq", HPACK(I_IRMOVQ, F_NONE), 10, I_ARG, 2, 8, R_ARG, 1, 0 },
++    {"irmovb", HPACK(I_IRMOVQ, S_BYTE), 3, I_ARG, 2, 1, R_ARG, 1, 0 },
++    {"irmovw", HPACK(I_IRMOVQ, S_WORD), 4, I_ARG, 2, 2, R_ARG, 1, 0 },
++    {"irmovl", HPACK(I_IRMOVQ, S_LONG), 6, I_ARG, 2, 4, R_ARG, 1, 0 },
++    {"irmovq", HPACK(I_IRMOVQ, S_QUAD), 10, I_ARG, 2, 8, R_ARG, 1, 0 },
+     {"rmmovq", HPACK(I_RMMOVQ, F_NONE), 10, R_ARG, 1, 1, M_ARG, 1, 0 },
+     {"mrmovq", HPACK(I_MRMOVQ, F_NONE), 10, M_ARG, 1, 0, R_ARG, 1, 1 },
+     {"addq",   HPACK(I_ALU, A_ADD), 2, R_ARG, 1, 1, R_ARG, 1, 0 },
+@@ -87,7 +90,8 @@ instr_t instruction_set[] =
+     {"jne",    HPACK(I_JMP, C_NE), 9, I_ARG, 1, 8, NO_ARG, 0, 0 },
+     {"jge",    HPACK(I_JMP, C_GE), 9, I_ARG, 1, 8, NO_ARG, 0, 0 },
+     {"jg",     HPACK(I_JMP, C_G), 9, I_ARG, 1, 8, NO_ARG, 0, 0 },
+-    {"call",   HPACK(I_CALL, F_NONE),    9, I_ARG, 1, 8, NO_ARG, 0, 0 },
++    {"call",   HPACK(I_CALL, O_ABS),    9, I_ARG, 1, 8, NO_ARG, 0, 0 },
++    {"callo",  HPACK(I_CALL, O_OFF),    5, O_ARG, 1, 4, NO_ARG, 0, 0 },
+     {"ret",    HPACK(I_RET, F_NONE), 1, NO_ARG, 0, 0, NO_ARG, 0, 0 },
+     {"pushq",  HPACK(I_PUSHQ, F_NONE) , 2, R_ARG, 1, 1, NO_ARG, 0, 0 },
+     {"popq",   HPACK(I_POPQ, F_NONE) ,  2, R_ARG, 1, 1, NO_ARG, 0, 0 },
+@@ -319,6 +323,21 @@ bool_t get_word_val(mem_t m, word_t pos, word_t *dest)
+     return TRUE;
+ }
+ 
++bool_t get_size_val(mem_t m, word_t pos, byte_t size, word_t *dest)
++{
++    int i;
++    word_t val;
++    if (pos < 0 || pos + size > m->len)
++	return FALSE;
++    val = 0;
++    for (i = 0; i < size; i++) {
++	word_t b =  m->contents[pos+i] & 0xFF;
++	val = val | (b <<(8*i));
++    }
++    *dest = val;
++    return TRUE;
++}
++
+ bool_t set_byte_val(mem_t m, word_t pos, byte_t val)
+ {
+     if (pos < 0 || pos >= m->len)
+@@ -662,14 +681,57 @@ stat_t step_state(state_ptr s, FILE *error_file)
+     }
+ 
+     need_imm =
+-	(hi0 == I_IRMOVQ || hi0 == I_RMMOVQ || hi0 == I_MRMOVQ ||
+-	 hi0 == I_JMP || hi0 == I_CALL);
++	(hi0 == I_RMMOVQ || hi0 == I_MRMOVQ ||
++	 hi0 == I_JMP);
+ 
+     if (need_imm) {
+ 	okc = get_word_val(s->m, ftpc, &cval);
+ 	ftpc += 8;
+     }
+ 
++    // Handle call offsets
++    if (hi0 == I_CALL) {
++	    if (lo0 == O_ABS) {
++		    okc = get_word_val(s->m, ftpc, &cval);
++		    ftpc += 8;
++	    } else if (lo0 == O_OFF) {
++                    okc = get_size_val(s->m, ftpc, 4, &cval);
++                    ftpc += 4;
++	    } else {
++                    if (error_file)
++                            fprintf(error_file,
++                                            "PC = 0x%llx, Invalid instruction address\n", s->pc);
++                    return STAT_INS;
++	    }
++    } else if (hi0 == I_IRMOVQ) { // Handle irmovX
++	    switch (lo0) {
++            case S_QUAD:
++                    okc = get_word_val(s->m, ftpc, &cval);
++                    ftpc += 8;
++                    break;
++            case S_LONG:
++                    okc = get_size_val(s->m, ftpc, 4, &cval);
++                    cval = (cval << 32) >> 32;
++                    ftpc += 4;
++                    break;
++            case S_WORD:
++                    okc = get_size_val(s->m, ftpc, 2, &cval);
++                    cval = (cval << 48) >> 48;
++                    ftpc += 2;
++                    break;
++            case S_BYTE:
++                    okc = get_size_val(s->m, ftpc, 1, &cval);
++                    cval = (cval << 56) >> 56;
++                    ftpc++;
++                    break;
++            default:
++                    if (error_file)
++                            fprintf(error_file,
++				    "PC = 0x%llx, Invalid instruction address\n", s->pc);
++                    return STAT_INS;
++	    }
++    }
++
+     switch (hi0) {
+     case I_NOP:
+ 	s->pc = ftpc;
+@@ -839,7 +901,10 @@ stat_t step_state(state_ptr s, FILE *error_file)
+ 			"PC = 0x%llx, Invalid stack address 0x%llx\n", s->pc, val);
+ 	    return STAT_ADR;
+ 	}
+-	s->pc = cval;
++	if (lo0 == O_ABS)
++		s->pc = cval;
++	else if (lo0 == O_OFF)
++		s->pc = ftpc + cval;
+ 	break;
+     case I_RET:
+ 	/* Return Instruction.  Pop address from stack */
+diff --git a/sim/misc/isa.h b/sim/misc/isa.h
+index 1069bac..875d92a 100644
+--- a/sim/misc/isa.h
++++ b/sim/misc/isa.h
+@@ -27,7 +27,7 @@ char *reg_name(reg_id_t id);
+ /**************** Instruction Encoding **************/
+ 
+ /* Different argument types */
+-typedef enum { R_ARG, M_ARG, I_ARG, NO_ARG } arg_t;
++typedef enum { R_ARG, M_ARG, I_ARG, O_ARG, NO_ARG } arg_t;
+ 
+ /* Different instruction types */
+ typedef enum { I_HALT, I_NOP, I_RRMOVQ, I_IRMOVQ, I_RMMOVQ, I_MRMOVQ,
+@@ -39,6 +39,12 @@ typedef enum { A_ADD, A_SUB, A_AND, A_XOR, A_NONE } alu_t;
+ /* Default function code */
+ typedef enum { F_NONE } fun_t;
+ 
++/* Function code for immediate movs */
++typedef enum { S_QUAD, S_LONG, S_WORD, S_BYTE } funsize_t;
++
++/* Offset types for call instructions */
++typedef enum { O_ABS, O_OFF } offset_t;
++
+ /* Return name of operation given its ID */
+ char op_name(alu_t op);
+ 
+@@ -124,6 +130,9 @@ bool_t get_byte_val(mem_t m, word_t pos, byte_t *dest);
+ /* Get 8 bytes from memory */
+ bool_t get_word_val(mem_t m, word_t pos, word_t *dest);
+ 
++/* Get size bytes from memory */
++bool_t get_size_val(mem_t m, word_t pos, byte_t size, word_t *dest);
++
+ /* Set byte in memory */
+ bool_t set_byte_val(mem_t m, word_t pos, byte_t val);
+ 
+diff --git a/sim/misc/yas-grammar.lex b/sim/misc/yas-grammar.lex
+index d2d9737..8718031 100644
+--- a/sim/misc/yas-grammar.lex
++++ b/sim/misc/yas-grammar.lex
+@@ -1,7 +1,7 @@
+ /* Grammar for Y86-64 Assembler */
+  #include "yas.h"
+ 
+-Instr         rrmovq|cmovle|cmovl|cmove|cmovne|cmovge|cmovg|rmmovq|mrmovq|irmovq|addq|subq|andq|xorq|jmp|jle|jl|je|jne|jge|jg|call|ret|pushq|popq|"."byte|"."word|"."long|"."quad|"."pos|"."align|halt|nop
++Instr         rrmovq|cmovle|cmovl|cmove|cmovne|cmovge|cmovg|rmmovq|mrmovq|irmovq|irmovl|irmovw|irmovb|addq|subq|andq|xorq|jmp|jle|jl|je|jne|jge|jg|call|callo|ret|pushq|popq|"."byte|"."word|"."long|"."quad|"."pos|"."align|halt|nop
+ Letter        [a-zA-Z]
+ Digit         [0-9]
+ Ident         {Letter}({Letter}|{Digit}|_)*
+diff --git a/sim/misc/yas.c b/sim/misc/yas.c
+index f36b1b6..5b5df31 100644
+--- a/sim/misc/yas.c
++++ b/sim/misc/yas.c
+@@ -407,6 +407,9 @@ void finish_line()
+     case I_ARG:
+ 	get_num(instr->arg1pos, instr->arg1hi, 0);
+ 	break;
++    case O_ARG:
++	get_num(instr->arg1pos, instr->arg1hi, bytepos);
++	break;
+     case NO_ARG:
+     default:
+ 	break;
+diff --git a/sim/pipe/Makefile b/sim/pipe/Makefile
+index ca4607e..930594c 100644
+--- a/sim/pipe/Makefile
++++ b/sim/pipe/Makefile
+@@ -4,20 +4,20 @@ VERSION=std
+ 
+ # Comment this out if you don't have Tcl/Tk on your system
+ 
+-GUIMODE=-DHAS_GUI
++#GUIMODE=-DHAS_GUI
+ 
+ # Modify the following line so that gcc can find the libtcl.so and
+ # libtk.so libraries on your system. You may need to use the -L option
+ # to tell gcc which directory to look in. Comment this out if you
+ # don't have Tcl/Tk.
+ 
+-TKLIBS=-L/usr/lib -ltk -ltcl
++#TKLIBS=-L/usr/lib -ltk -ltcl
+ 
+ # Modify the following line so that gcc can find the tcl.h and tk.h
+ # header files on your system. Comment this out if you don't have
+ # Tcl/Tk.
+ 
+-TKINC=-isystem /usr/include/tcl8.5
++#TKINC=-isystem /usr/include/tcl8.5
+ 
+ # Modify these two lines to choose your compiler and compile time
+ # flags.
+diff --git a/sim/pipe/pipe-std.c b/sim/pipe/pipe-std.c
+deleted file mode 100644
+index e69de29..0000000
+diff --git a/sim/pipe/pipe-std.hcl b/sim/pipe/pipe-std.hcl
+index 1bc8ce8..f279573 100644
+--- a/sim/pipe/pipe-std.hcl
++++ b/sim/pipe/pipe-std.hcl
+@@ -37,6 +37,16 @@ wordsig IPOPQ	'I_POPQ'
+ ##### Symbolic represenations of Y86-64 function codes            #####
+ wordsig FNONE    'F_NONE'        # Default function code
+ 
++##### Sizes
++wordsig SQUAD  'S_QUAD'
++wordsig SLONG  'S_LONG'
++wordsig SWORD  'S_WORD'
++wordsig SBYTE  'S_BYTE'
++
++# Offset types
++wordsig OABS   'O_ABS'
++wordsig OOFF   'O_OFF'
++
+ ##### Symbolic representation of Y86-64 Registers referenced      #####
+ wordsig RRSP     'REG_RSP'    	     # Stack Pointer
+ wordsig RNONE    'REG_NONE'   	     # Special value indicating "no register"
+@@ -65,8 +75,10 @@ wordsig f_icode	'if_id_next->icode'  # (Possibly modified) instruction code
+ wordsig f_ifun	'if_id_next->ifun'   # Fetched instruction function
+ wordsig f_valC	'if_id_next->valc'   # Constant data of fetched instruction
+ wordsig f_valP	'if_id_next->valp'   # Address of following instruction
++wordsig f_valO	'if_id_next->valo'
+ boolsig imem_error 'imem_error'	     # Error signal from instruction memory
+ boolsig instr_valid 'instr_valid'    # Is fetched instruction valid?
++wordsig need_bytes 'need_bytes'
+ 
+ ##### Pipeline Register D ##########################################
+ wordsig D_icode 'if_id_curr->icode'   # Instruction code
+@@ -170,15 +182,26 @@ bool need_regids =
+ bool need_valC =
+ 	f_icode in { IIRMOVQ, IRMMOVQ, IMRMOVQ, IJXX, ICALL };
+ 
++word need_bytes = [
++	f_icode == ICALL && f_ifun == OABS : 8;
++	f_icode == ICALL && f_ifun == OOFF : 4;
++	f_icode == IIRMOVQ && f_ifun == SQUAD : 8;
++	f_icode == IIRMOVQ && f_ifun == SLONG : 4;
++	f_icode == IIRMOVQ && f_ifun == SWORD : 2;
++	f_icode == IIRMOVQ && f_ifun == SBYTE : 1;
++	1 : 8;
++];
++
+ # Predict next value of PC
+ word f_predPC = [
+-	f_icode in { IJXX, ICALL } : f_valC;
++	f_icode == IJXX : f_valC;
++	f_icode == ICALL && f_ifun == OABS : f_valC;
++	f_icode == ICALL && f_ifun == OOFF : f_valO;
+ 	1 : f_valP;
+ ];
+ 
+ ################ Decode Stage ######################################
+ 
+-
+ ## What register should be used as the A source?
+ word d_srcA = [
+ 	D_icode in { IRRMOVQ, IRMMOVQ, IOPQ, IPUSHQ  } : D_rA;
+diff --git a/sim/pipe/psim.c b/sim/pipe/psim.c
+index 9c29c51..2ac1007 100644
+--- a/sim/pipe/psim.c
++++ b/sim/pipe/psim.c
+@@ -360,6 +360,7 @@ byte_t imem_icode;
+ byte_t imem_ifun;
+ bool_t imem_error;
+ bool_t instr_valid;
++word_t need_bytes;
+ word_t d_regvala;
+ word_t d_regvalb;
+ word_t e_vala;
+@@ -1378,6 +1379,7 @@ mem_wb_ele bubble_mem_wb = { I_NOP, 0, 0, 0, REG_NONE, REG_NONE,
+ word_t gen_f_pc();
+ word_t gen_need_regids();
+ word_t gen_need_valC();
++word_t gen_need_bytes();
+ word_t gen_instr_valid();
+ word_t gen_f_predPC();
+ word_t gen_f_icode();
+@@ -1424,11 +1426,13 @@ void do_if_stage()
+     if_id_next->ra = HI4(regids);
+     if_id_next->rb = LO4(regids);
+     if (gen_need_valC()) {
+-	get_word_val(mem, valp, &valc);
+-	valp+= 8;
++	get_size_val(mem, valp, gen_need_bytes(), &valc);
++	valp+= gen_need_bytes();
++	valc = (valc << (64-8*gen_need_bytes())) >> (64-8*gen_need_bytes());
+     }
+     if_id_next->valp = valp;
+     if_id_next->valc = valc;
++    if_id_next->valo = valp + valc;
+ 
+     pc_next->pc = gen_f_predPC();
+ 
+diff --git a/sim/pipe/stages.h b/sim/pipe/stages.h
+index a86db9a..1b753db 100644
+--- a/sim/pipe/stages.h
++++ b/sim/pipe/stages.h
+@@ -19,6 +19,7 @@ typedef struct {
+     byte_t rb; /* Register rb ID */
+     word_t valc;  /* Instruction word encoding immediate data */
+     word_t valp; /* Incremented program counter */
++    word_t valo;
+     stat_t status;
+     /* The following is included for debugging */
+     word_t stage_pc;
+diff --git a/sim/seq/Makefile b/sim/seq/Makefile
+index 0c71aae..200f029 100644
+--- a/sim/seq/Makefile
++++ b/sim/seq/Makefile
+@@ -4,20 +4,20 @@ VERSION=std
+ 
+ # Comment this out if you don't have Tcl/Tk on your system
+ 
+-GUIMODE=-DHAS_GUI
++#GUIMODE=-DHAS_GUI
+ 
+ # Modify the following line so that gcc can find the libtcl.so and
+ # libtk.so libraries on your system. You may need to use the -L option
+ # to tell gcc which directory to look in. Comment this out if you
+ # don't have Tcl/Tk.
+ 
+-TKLIBS=-L/usr/lib -ltk -ltcl
++#TKLIBS=-L/usr/lib -ltk -ltcl
+ 
+ # Modify the following line so that gcc can find the tcl.h and tk.h
+ # header files on your system. Comment this out if you don't have
+ # Tcl/Tk.
+ 
+-TKINC=-isystem /usr/include/tcl8.5
++#TKINC=-isystem /usr/include/tcl8.5
+ 
+ # Modify these two lines to choose your compiler and compile time
+ # flags.
+diff --git a/sim/seq/seq-std.hcl b/sim/seq/seq-std.hcl
+index 9ee68ad..b000ab3 100644
+--- a/sim/seq/seq-std.hcl
++++ b/sim/seq/seq-std.hcl
+@@ -37,6 +37,16 @@ wordsig IPOPQ	'I_POPQ'
+ ##### Symbolic represenations of Y86-64 function codes                  #####
+ wordsig FNONE    'F_NONE'        # Default function code
+ 
++##### Sizes
++wordsig SQUAD	'S_QUAD'
++wordsig SLONG	'S_LONG'
++wordsig SWORD	'S_WORD'
++wordsig SBYTE	'S_BYTE'
++
++# Offset types
++wordsig OABS	'O_ABS'
++wordsig OOFF	'O_OFF'
++
+ ##### Symbolic representation of Y86-64 Registers referenced explicitly #####
+ wordsig RRSP     'REG_RSP'    	# Stack Pointer
+ wordsig RNONE    'REG_NONE'   	# Special value indicating "no register"
+@@ -63,6 +73,7 @@ wordsig rA	  'ra'			# rA field from instruction
+ wordsig rB	  'rb'			# rB field from instruction
+ wordsig valC	  'valc'		# Constant from instruction
+ wordsig valP	  'valp'		# Address of following instruction
++wordsig valO	  'valo'
+ boolsig imem_error 'imem_error'		# Error signal from instruction memory
+ boolsig instr_valid 'instr_valid'	# Is fetched instruction valid?
+ 
+@@ -112,6 +123,17 @@ bool need_valC =
+ 
+ ################ Decode Stage    ###################################
+ 
++## Number of bytes required for the IRMOVQ
++word needBytes = [
++	icode == ICALL && ifun == OABS : 8;
++	icode == ICALL && ifun == OOFF : 4;
++	icode == IIRMOVQ && ifun == SQUAD : 8;
++	icode == IIRMOVQ && ifun == SLONG : 4;
++	icode == IIRMOVQ && ifun == SWORD : 2;
++	icode == IIRMOVQ && ifun == SBYTE : 1;
++	1 : 8;
++];
++
+ ## What register should be used as the A source?
+ word srcA = [
+ 	icode in { IRRMOVQ, IRMMOVQ, IOPQ, IPUSHQ  } : rA;
+@@ -206,7 +228,8 @@ word Stat = [
+ 
+ word new_pc = [
+ 	# Call.  Use instruction constant
+-	icode == ICALL : valC;
++	icode == ICALL && ifun == OABS: valC;
++	icode == ICALL && ifun == OOFF: valO;
+ 	# Taken branch.  Use instruction constant
+ 	icode == IJXX && Cnd : valC;
+ 	# Completion of RET instruction.  Use value from stack
+diff --git a/sim/seq/sim.h b/sim/seq/sim.h
+index e5bf485..4c6d7ae 100644
+--- a/sim/seq/sim.h
++++ b/sim/seq/sim.h
+@@ -46,6 +46,7 @@ extern word_t ra;
+ extern word_t rb;
+ extern word_t valc;
+ extern word_t valp;
++extern word_t valo;
+ extern bool_t imem_error;
+ extern bool_t instr_valid;
+ extern word_t vala;
+diff --git a/sim/seq/ssim.c b/sim/seq/ssim.c
+index ff83174..9391247 100644
+--- a/sim/seq/ssim.c
++++ b/sim/seq/ssim.c
+@@ -355,6 +355,7 @@ word_t ra = REG_NONE;
+ word_t rb = REG_NONE;
+ word_t valc = 0;
+ word_t valp = 0;
++word_t valo = 0;
+ bool_t imem_error;
+ bool_t instr_valid;
+ 
+@@ -384,6 +385,7 @@ word_t gen_ifun();
+ word_t gen_need_regids();
+ word_t gen_need_valC();
+ word_t gen_instr_valid();
++word_t gen_needBytes();
+ word_t gen_srcA();
+ word_t gen_srcB();
+ word_t gen_dstE();
+@@ -596,6 +598,7 @@ void sim_reset()
+     rb = REG_NONE;
+     valc = 0;
+     valp = 0;
++    valo = 0;
+ 
+     srcA = REG_NONE;
+     srcB = REG_NONE;
+@@ -702,13 +705,15 @@ static byte_t sim_step()
+     }
+ 
+     if (gen_need_valC()) {
+-	if (get_word_val(mem, valp, &valc)) {
++	if (get_size_val(mem, valp, gen_needBytes(), &valc)) {
++		valp += gen_needBytes();
++		valc = (valc << (64-8*gen_needBytes())) >> (64-8*gen_needBytes());
+ 	} else {
+ 	    valc = 0;
+ 	    status = STAT_ADR;
+ 	    sim_log("Couldn't fetch at address 0x%llx\n", valp);
++	    valp+=8;
+ 	}
+-	valp+=8;
+     } else {
+ 	valc = 0;
+     }
+@@ -769,6 +774,8 @@ static byte_t sim_step()
+ 
+     status = gen_Stat();
+ 
++    valo = valc+valp;
++
+     if (plusmode) {
+ 	prev_icode_in = icode;
+ 	prev_ifun_in = ifun;

@@ -1,0 +1,47 @@
+# entrypoint
+init:
+	.pos 0
+	irmovq stack, %rsp
+	call main
+	halt
+
+# data
+	.align 8
+src:
+	.quad 0x00a
+	.quad 0x0b0
+	.quad 0xc00
+dst:
+	.quad 0x111
+	.quad 0x222
+	.quad 0x333
+
+main:
+	irmovq src, %rdi
+	irmovq dst, %rsi
+	irmovq $3, %rdx
+	call copy_block
+	ret
+
+# sum_list function
+copy_block:
+	pushq %rbx
+	xorq %rax, %rax
+	irmovq $1, %r10
+	irmovq $8, %r11
+	jmp loop_chk
+loop:
+	mrmovq (%rdi), %rbx
+	addq %r11, %rdi
+	rmmovq %rbx, (%rsi)
+	addq %r11, %rsi
+	xorq %rbx, %rax
+	subq %r10, %rdx
+loop_chk:
+	andq %rdx, %rdx
+	jg loop
+	popq %rbx
+	ret
+
+.pos 0x200
+stack:
